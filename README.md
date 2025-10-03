@@ -19,6 +19,10 @@ A comprehensive SEC filing data collection and analysis system that tracks chang
 - **API**: RESTful endpoints for data ingestion and retrieval
 - **Containerization**: Docker Compose for easy deployment
 
+## Build backend project
+
+docker-compose up -d --build api
+
 ## License
 
 Private project - All rights reserved.

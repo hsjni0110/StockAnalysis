@@ -6,9 +6,10 @@ WORKDIR /app
 COPY build.gradle settings.gradle gradlew ./
 COPY gradle ./gradle
 
-# Copy source code
+# Copy all source code directories
 COPY common ./common
 COPY api ./api
+COPY ingestor-edgar ./ingestor-edgar
 
 # Build the application
 RUN ./gradlew :api:build -x test

@@ -1,7 +1,6 @@
 package com.stockdelta.api.dto;
 
 import com.stockdelta.common.entity.Filing;
-import com.stockdelta.common.entity.Issuer;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -21,7 +20,7 @@ public class FilingDto {
 
     public FilingDto() {}
 
-    public FilingDto(Filing filing, Issuer issuer) {
+    public FilingDto(Filing filing, String ticker, String companyName) {
         this.id = filing.getId();
         this.cik = filing.getCik();
         this.accessionNo = filing.getAccessionNo();
@@ -31,11 +30,8 @@ public class FilingDto {
         this.primaryDocUrl = filing.getPrimaryDocUrl();
         this.source = filing.getSource();
         this.createdAt = filing.getCreatedAt();
-
-        if (issuer != null) {
-            this.ticker = issuer.getTicker();
-            this.companyName = issuer.getName();
-        }
+        this.ticker = ticker;
+        this.companyName = companyName;
     }
 
     // Getters and Setters

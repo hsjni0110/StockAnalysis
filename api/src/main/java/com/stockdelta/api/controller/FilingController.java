@@ -4,9 +4,6 @@ import com.stockdelta.common.entity.Filing;
 import com.stockdelta.common.repository.FilingRepository;
 import com.stockdelta.common.repository.IssuerRepository;
 import com.stockdelta.api.dto.FilingDto;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,8 +17,6 @@ import java.util.Optional;
 @CrossOrigin(origins = "*")
 public class FilingController {
 
-    private static final Logger logger = LoggerFactory.getLogger(FilingController.class);
-
     private final FilingRepository filingRepository;
     private final IssuerRepository issuerRepository;
 
@@ -32,7 +27,7 @@ public class FilingController {
     }
 
     @GetMapping("/{symbol}/latest")
-    public ResponseEntity<List<Filing>> getLatestFilings(
+    public ResponseEntity<List<FilingDto>> getLatestFilings(
             @PathVariable String symbol,
             @RequestParam(required = false) String form,
             @RequestParam(defaultValue = "10") int limit) {
@@ -54,20 +49,20 @@ public class FilingController {
             filings = filingRepository.findByCikOrderByFiledAtDesc(cik);
         }
 
-        // Limit results and populate issuer info
-        List<Filing> limitedFilings = filings.stream()
+        // Limit results and convert to DTOs
+        String ticker = issuer.get().getTicker();
+        String companyName = issuer.get().getName();
+
+        List<FilingDto> filingDtos = filings.stream()
                 .limit(limit)
-                .peek(filing -> {
-                    filing.setTicker(issuer.get().getTicker());
-                    filing.setCompanyName(issuer.get().getName());
-                })
+                .map(filing -> new FilingDto(filing, ticker, companyName))
                 .toList();
 
-        return ResponseEntity.ok(limitedFilings);
+        return ResponseEntity.ok(filingDtos);
     }
 
     @GetMapping("/{symbol}/recent")
-    public ResponseEntity<List<Filing>> getRecentFilings(
+    public ResponseEntity<List<FilingDto>> getRecentFilings(
             @PathVariable String symbol,
             @RequestParam(required = false) String form,
             @RequestParam(defaultValue = "7") int days) {
@@ -90,12 +85,14 @@ public class FilingController {
             filings = filingRepository.findByCiksAndFiledAtAfter(List.of(cik), since);
         }
 
-        filings.forEach(filing -> {
-            filing.setTicker(issuer.get().getTicker());
-            filing.setCompanyName(issuer.get().getName());
-        });
+        String ticker = issuer.get().getTicker();
+        String companyName = issuer.get().getName();
 
-        return ResponseEntity.ok(filings);
+        List<FilingDto> filingDtos = filings.stream()
+                .map(filing -> new FilingDto(filing, ticker, companyName))
+                .toList();
+
+        return ResponseEntity.ok(filingDtos);
     }
 
     @GetMapping("/recent")
@@ -123,8 +120,10 @@ public class FilingController {
                 .sorted((f1, f2) -> f2.getFiledAt().compareTo(f1.getFiledAt()))
                 .limit(limit)
                 .map(filing -> {
-                    var issuer = issuerRepository.findByCik(filing.getCik()).orElse(null);
-                    return new FilingDto(filing, issuer);
+                    var issuer = issuerRepository.findByCik(filing.getCik());
+                    String ticker = issuer.map(com.stockdelta.common.entity.Issuer::getTicker).orElse(null);
+                    String companyName = issuer.map(com.stockdelta.common.entity.Issuer::getName).orElse(null);
+                    return new FilingDto(filing, ticker, companyName);
                 })
                 .toList();
 
@@ -132,15 +131,20 @@ public class FilingController {
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<Filing>> searchFilings(
+    public ResponseEntity<List<FilingDto>> searchFilings(
             @RequestParam(required = false) String symbol,
             @RequestParam(required = false) String form,
             @RequestParam(required = false) String accessionNo) {
 
         if (accessionNo != null && !accessionNo.isEmpty()) {
             Optional<Filing> filing = filingRepository.findByAccessionNo(accessionNo);
-            return filing.map(f -> ResponseEntity.ok(List.of(f)))
-                         .orElse(ResponseEntity.notFound().build());
+            if (filing.isPresent()) {
+                var issuer = issuerRepository.findByCik(filing.get().getCik());
+                String ticker = issuer.map(com.stockdelta.common.entity.Issuer::getTicker).orElse(null);
+                String companyName = issuer.map(com.stockdelta.common.entity.Issuer::getName).orElse(null);
+                return ResponseEntity.ok(List.of(new FilingDto(filing.get(), ticker, companyName)));
+            }
+            return ResponseEntity.notFound().build();
         }
 
         if (symbol != null && !symbol.isEmpty()) {
@@ -160,13 +164,15 @@ public class FilingController {
                 filings = filingRepository.findByCikOrderByFiledAtDesc(cik);
             }
 
-            // Populate issuer info
-            filings.forEach(filing -> {
-                filing.setTicker(issuer.get().getTicker());
-                filing.setCompanyName(issuer.get().getName());
-            });
+            // Convert to DTOs
+            String ticker = issuer.get().getTicker();
+            String companyName = issuer.get().getName();
 
-            return ResponseEntity.ok(filings);
+            List<FilingDto> filingDtos = filings.stream()
+                    .map(filing -> new FilingDto(filing, ticker, companyName))
+                    .toList();
+
+            return ResponseEntity.ok(filingDtos);
         }
 
         return ResponseEntity.badRequest().build();
