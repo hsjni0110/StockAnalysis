@@ -1,0 +1,5 @@
+rootProject.name = 'stock-delta-system'
+
+include 'common'
+include 'api'
+include 'ingestor-edgar'

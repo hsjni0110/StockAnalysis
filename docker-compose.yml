@@ -1,0 +1,78 @@
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stock-postgres
+    environment:
+      POSTGRES_DB: stock_delta
+      POSTGRES_USER: stock_user
+      POSTGRES_PASSWORD: stock_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - stock-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: stock-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - stock-network
+
+  api:
+    build:
+      context: .
+      dockerfile: ./api/Dockerfile
+    container_name: stock-api
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=stock_delta
+      - DB_USER=stock_user
+      - DB_PASSWORD=stock_password
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SEC_USER_AGENT=StockDeltaSystem/1.0; admin@stockdelta.com
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - stock-network
+
+  ingestor:
+    build:
+      context: .
+      dockerfile: ./ingestor-edgar/Dockerfile
+    container_name: stock-ingestor
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=stock_delta
+      - DB_USER=stock_user
+      - DB_PASSWORD=stock_password
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SEC_USER_AGENT=StockDeltaSystem/1.0; admin@stockdelta.com
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - stock-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  stock-network:
+    driver: bridge
