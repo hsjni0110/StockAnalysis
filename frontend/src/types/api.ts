@@ -59,3 +59,68 @@ export interface ApiError {
   status: number;
   timestamp: string;
 }
+
+// DeltaMap types
+export interface FilingDelta {
+  id: number;
+  filingId: number;
+  section: string;
+  operation: 'INSERT' | 'DELETE' | 'MODIFY';
+  snippet: string;
+  score: number;
+  createdAt: string;
+}
+
+export interface FilingSection {
+  id: number;
+  filingId: number;
+  section: string;
+  text: string;
+  textHash: string;
+  charCount: number;
+  createdAt: string;
+}
+
+export interface DeltaMapResponse {
+  current: FilingInfo;
+  previous?: FilingInfo;
+  totalChanges: number;
+  insertCount: number;
+  deleteCount: number;
+  modifyCount: number;
+  deltas: FilingDelta[];
+}
+
+export interface FilingInfo {
+  filingId: number;
+  form: string;
+  periodEnd?: string;
+  filedAt: string;
+  accessionNo: string;
+  primaryDocUrl: string;
+}
+
+export interface XbrlHeatmapData {
+  filingId: number;
+  rows: HeatmapRow[];
+}
+
+export interface HeatmapRow {
+  metric: string;
+  values: Record<string, number>; // basis -> value (e.g., "QoQ": 5.2, "YoY": 12.1)
+  zScore: number;
+}
+
+export interface ChangeBadge {
+  type: 'section' | 'xbrl';
+  label: string;
+  severity: 'low' | 'medium' | 'high';
+}
+
+export interface TickerDeltaSummary {
+  symbol: string;
+  companyName: string;
+  latestFiling: FilingInfo;
+  totalChanges: number;
+  changeBadges: ChangeBadge[];
+}

@@ -71,6 +71,114 @@
 }
 ```
 
+## DeltaMap API
+
+### POST /api/filings/{filingId}/analyze-delta
+파일링 변화 분석을 비동기로 트리거합니다.
+
+**Response:**
+```json
+{
+  "jobId": "abc-123",
+  "status": "processing"
+}
+```
+
+### GET /api/filings/{filingId}/sections
+파일링의 특정 섹션 텍스트를 조회합니다.
+
+**Query Parameters:**
+- `section`: 조회할 섹션 (예: Item1A, Item7)
+
+**Response:**
+```json
+{
+  "sections": [
+    {
+      "section": "Item1A",
+      "text": "...",
+      "charCount": 15000,
+      "hash": "abc123..."
+    }
+  ]
+}
+```
+
+### GET /api/filings/{filingId}/deltas
+파일링의 변화 분석 결과를 조회합니다.
+
+**Query Parameters:**
+- `section`: 섹션 필터 (선택적)
+
+**Response:**
+```json
+{
+  "current": {
+    "filingId": 123,
+    "form": "10-Q",
+    "periodEnd": "2024-09-30"
+  },
+  "previous": {
+    "filingId": 122,
+    "form": "10-Q",
+    "periodEnd": "2024-06-30"
+  },
+  "deltas": [
+    {
+      "operation": "INSERT",
+      "snippet": "...",
+      "score": 0.85,
+      "context": "..."
+    }
+  ]
+}
+```
+
+### GET /api/filings/{filingId}/xbrl-heatmap
+XBRL 메트릭 변화율 히트맵 데이터를 조회합니다.
+
+**Response:**
+```json
+{
+  "metrics": [
+    {
+      "tag": "Revenue",
+      "current": 100000000,
+      "previous": 95000000,
+      "change": 5.26,
+      "basis": "QoQ",
+      "zscore": 1.2
+    }
+  ]
+}
+```
+
+### GET /api/tickers/{symbol}/delta-summary
+특정 티커의 최신 변화 요약을 조회합니다.
+
+**Response:**
+```json
+{
+  "latestFiling": {
+    "id": 123,
+    "form": "10-Q",
+    "periodEnd": "2024-09-30"
+  },
+  "changeBadges": [
+    {
+      "type": "section",
+      "label": "MD&A 3문단 변경",
+      "severity": "medium"
+    },
+    {
+      "type": "xbrl",
+      "label": "매출 +12% 급증",
+      "severity": "high"
+    }
+  ]
+}
+```
+
 ## 사용 예시
 
 ```bash
