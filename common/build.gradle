@@ -20,4 +20,10 @@ dependencies {
     // For JSON processing
     implementation 'com.fasterxml.jackson.core:jackson-core'
     implementation 'com.fasterxml.jackson.core:jackson-annotations'
+
+    // HTML parsing and text processing
+    implementation 'org.jsoup:jsoup:1.17.2'
+
+    // Diff matching
+    implementation 'org.bitbucket.cowwoc:diff-match-patch:1.2'
 }

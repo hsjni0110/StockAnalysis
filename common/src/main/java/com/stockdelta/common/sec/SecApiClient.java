@@ -82,6 +82,48 @@ public class SecApiClient {
         return executeWithRateLimit(endpoint, cacheKey);
     }
 
+    public Mono<String> fetchDocument(String url) {
+        // URL can be absolute (full SEC URL) or relative path
+        String finalUrl = url.startsWith("http") ? url : secConfig.getBaseUrl() + url;
+
+        // Extract a cache key from the URL
+        String cacheKey = "doc_" + url.hashCode();
+
+        // Check cache first
+        String cached = getCachedResponse(cacheKey);
+        if (cached != null) {
+            logger.debug("Cache hit for document: {}", url);
+            return Mono.just(cached);
+        }
+
+        // Apply rate limiting
+        return Mono.fromCallable(() -> {
+            rateLimiter.acquire();
+            return true;
+        })
+        .flatMap(ignored -> {
+            logger.debug("Fetching document: {}", url);
+
+            WebClient client = url.startsWith("http") ?
+                WebClient.builder()
+                    .defaultHeader("User-Agent", secConfig.getUserAgent())
+                    .defaultHeader("Accept", "text/html,application/xhtml+xml")
+                    .defaultHeader("Accept-Encoding", "gzip, deflate")
+                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(50 * 1024 * 1024)) // 50MB for documents
+                    .build() :
+                webClient;
+
+            return client.get()
+                    .uri(url.startsWith("http") ? finalUrl : url)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(2))
+                            .filter(this::isRetryableError))
+                    .doOnSuccess(response -> cacheResponse(cacheKey, response))
+                    .doOnError(error -> logger.error("Document fetch failed for {}: {}", url, error.getMessage()));
+        });
+    }
+
     private Mono<String> executeWithRateLimit(String endpoint, String cacheKey) {
         // Check cache first
         String cached = getCachedResponse(cacheKey);
