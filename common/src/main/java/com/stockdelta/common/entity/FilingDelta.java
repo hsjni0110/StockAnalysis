@@ -24,7 +24,7 @@ public class FilingDelta {
     private String section;
 
     @Enumerated(EnumType.STRING)
-    @Size(max = 10)
+    @Column(length = 10)
     private Operation operation;
 
     @Column(columnDefinition = "TEXT")

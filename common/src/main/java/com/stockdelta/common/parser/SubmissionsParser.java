@@ -165,4 +165,53 @@ public class SubmissionsParser {
                 .filter(filing -> formSet.contains(filing.getForm()))
                 .toList();
     }
+
+    /**
+     * Get filings for comparison analysis
+     * Returns the most recent N filings of a specific form
+     */
+    public List<Filing> getFilingsForComparison(List<Filing> allFilings, String form, int minCount) {
+        return allFilings.stream()
+                .filter(f -> f.getForm().equals(form))
+                .sorted((a, b) -> b.getFiledAt().compareTo(a.getFiledAt())) // Sort by filed date descending
+                .limit(minCount)
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Filter filings needed for comparison analysis
+     * Returns Map of form type -> list of filings (minimum N filings per form)
+     * - 10-K: 2 filings (current year + previous year)
+     * - 10-Q: 4 filings (4 quarters for YoY comparison)
+     * - 8-K: 5 filings (recent events)
+     * - Form 4: 10 filings (insider trading tracking)
+     * - 13F-HR: 4 filings (quarterly institutional holdings)
+     * - 13D/13G: 5 filings (activist/large holder events)
+     */
+    public java.util.Map<String, List<Filing>> filterComparisonFilings(List<Filing> filings) {
+        java.util.Map<String, List<Filing>> result = new java.util.HashMap<>();
+
+        // 10-K: minimum 2 filings (current + previous year)
+        result.put("10-K", getFilingsForComparison(filings, "10-K", 2));
+
+        // 10-Q: minimum 4 filings (1 year of quarterly data for QoQ/YoY)
+        result.put("10-Q", getFilingsForComparison(filings, "10-Q", 4));
+
+        // 8-K: recent 5 filings (material events)
+        result.put("8-K", getFilingsForComparison(filings, "8-K", 5));
+
+        // Form 4: recent 10 filings (insider transaction tracking)
+        result.put("4", getFilingsForComparison(filings, "4", 10));
+
+        // 13F-HR: 4 filings (quarterly institutional holdings for 1 year)
+        result.put("13F-HR", getFilingsForComparison(filings, "13F-HR", 4));
+
+        // 13D: recent 5 filings (activist investor tracking)
+        result.put("13D", getFilingsForComparison(filings, "13D", 5));
+
+        // 13G: recent 5 filings (large holder tracking)
+        result.put("13G", getFilingsForComparison(filings, "13G", 5));
+
+        return result;
+    }
 }

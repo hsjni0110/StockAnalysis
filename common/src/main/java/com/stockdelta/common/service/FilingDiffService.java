@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -75,9 +76,9 @@ public class FilingDiffService {
         logger.info("Comparing {} vs {} for CIK {}",
                 currentFiling.getAccessionNo(), previousFiling.getAccessionNo(), currentFiling.getCik());
 
-        // Get sections for both filings
-        List<FilingSection> currentSections = sectionRepository.findByFilingId(filingId);
-        List<FilingSection> previousSections = sectionRepository.findByFilingId(previousFiling.getId());
+        // Get sections for both filings - extract if not present
+        List<FilingSection> currentSections = getOrExtractSections(filingId);
+        List<FilingSection> previousSections = getOrExtractSections(previousFiling.getId());
 
         List<FilingDelta> deltas = new ArrayList<>();
 
@@ -113,25 +114,58 @@ public class FilingDiffService {
         return deltas;
     }
 
+    /**
+     * Get sections for a filing, extracting them if they don't exist
+     */
+    private List<FilingSection> getOrExtractSections(Long filingId) {
+        List<FilingSection> sections = sectionRepository.findByFilingId(filingId);
+
+        if (sections.isEmpty()) {
+            logger.info("No sections found for filing {}, extracting...", filingId);
+            try {
+                sections = sectionExtractor.extractSections(filingId).block();
+                if (sections == null) {
+                    sections = new ArrayList<>();
+                }
+            } catch (Exception e) {
+                logger.error("Failed to extract sections for filing {}: {}", filingId, e.getMessage());
+                sections = new ArrayList<>();
+            }
+        }
+
+        return sections;
+    }
+
     private Optional<Filing> findPreviousFiling(Filing current) {
         String form = current.getForm();
         String cik = current.getCik();
         LocalDate periodEnd = current.getPeriodEnd();
 
         if (periodEnd == null) {
-            // Use filed date as fallback
+            // Use filed date as fallback if periodEnd is not available
+            logger.warn("Filing {} has no periodEnd, using filedAt for comparison",
+                current.getAccessionNo());
             return filingRepository.findByCikAndFormOrderByFiledAtDesc(cik, form).stream()
                     .filter(f -> f.getFiledAt().isBefore(current.getFiledAt()))
                     .findFirst();
         }
 
-        // For 10-Q: find previous quarter
-        // For 10-K: find previous year
-        List<Filing> previousFilings = filingRepository.findByCikAndFormOrderByFiledAtDesc(cik, form);
+        // Use periodEnd-based query for more accurate comparison
+        // This finds the most recent filing with periodEnd before the current filing's periodEnd
+        // For 10-Q: finds previous quarter (e.g., 2024-06-30 when current is 2024-09-30)
+        // For 10-K: finds previous year (e.g., 2023-12-31 when current is 2024-12-31)
+        Optional<Filing> previous = filingRepository.findPreviousByPeriodEnd(cik, form, periodEnd);
 
-        return previousFilings.stream()
-                .filter(f -> f.getPeriodEnd() != null && f.getPeriodEnd().isBefore(periodEnd))
-                .findFirst();
+        if (previous.isPresent()) {
+            logger.debug("Found previous filing for comparison: {} (period: {}) vs {} (period: {})",
+                current.getAccessionNo(), current.getPeriodEnd(),
+                previous.get().getAccessionNo(), previous.get().getPeriodEnd());
+        } else {
+            logger.warn("No previous filing found for CIK {} form {} before period {}",
+                cik, form, periodEnd);
+        }
+
+        return previous;
     }
 
     private List<FilingDelta> compareSectionText(Long filingId, FilingSection current, FilingSection previous) {

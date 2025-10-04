@@ -296,21 +296,53 @@ public class DataIngestionService {
                             issuerRepository.save(issuer);
                         }
 
-                        // Process filings
+                        // Process filings - filter only necessary filings for comparison
                         int inserted = 0;
                         int skipped = 0;
 
-                        for (Filing filing : data.getFilings()) {
-                            if (!filingRepository.existsByAccessionNo(filing.getAccessionNo())) {
-                                filingRepository.save(filing);
-                                inserted++;
-                            } else {
-                                skipped++;
+                        // Get filings needed for comparison analysis (10-K: 2, 10-Q: 4, etc.)
+                        java.util.Map<String, List<Filing>> comparisonFilings =
+                            submissionsParser.filterComparisonFilings(data.getFilings());
+
+                        // Track counts per form type for logging
+                        java.util.Map<String, Integer> formCounts = new java.util.HashMap<>();
+
+                        for (java.util.Map.Entry<String, List<Filing>> entry : comparisonFilings.entrySet()) {
+                            String formType = entry.getKey();
+                            List<Filing> filings = entry.getValue();
+                            int formInserted = 0;
+
+                            for (Filing filing : filings) {
+                                if (!filingRepository.existsByAccessionNo(filing.getAccessionNo())) {
+                                    filingRepository.save(filing);
+                                    inserted++;
+                                    formInserted++;
+                                    logger.debug("Saved {} filing: {} (period: {})",
+                                        filing.getForm(), filing.getAccessionNo(), filing.getPeriodEnd());
+                                } else {
+                                    skipped++;
+                                }
+                            }
+
+                            if (formInserted > 0) {
+                                formCounts.put(formType, formInserted);
                             }
                         }
 
-                        logger.info("Processed submissions for CIK {}: {} inserted, {} skipped",
-                                   cik, inserted, skipped);
+                        // Build detailed log message
+                        StringBuilder logMsg = new StringBuilder();
+                        logMsg.append("Processed submissions for CIK ").append(cik)
+                              .append(": ").append(inserted).append(" inserted");
+
+                        if (!formCounts.isEmpty()) {
+                            logMsg.append(" (");
+                            formCounts.forEach((form, count) ->
+                                logMsg.append(form).append(":").append(count).append(" "));
+                            logMsg.append(")");
+                        }
+
+                        logMsg.append(", ").append(skipped).append(" skipped");
+                        logger.info(logMsg.toString());
 
                         return Mono.just(new CompanyIngestionResult(inserted, skipped));
 

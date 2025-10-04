@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(curl -s 'https://www.sec.gov/cgi-bin/viewer?action=view&cik=789019&accession_number=0000950170-25-100235&xbrl_type=v')",
+      "WebFetch(domain:github.com)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

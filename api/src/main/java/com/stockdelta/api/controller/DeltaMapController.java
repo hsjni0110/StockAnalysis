@@ -9,6 +9,8 @@ import com.stockdelta.common.service.FilingDiffService;
 import com.stockdelta.common.service.FilingSectionExtractor;
 import com.stockdelta.common.service.XbrlMetricsService;
 import com.stockdelta.api.dto.DeltaMapDto;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +29,8 @@ import java.util.Optional;
 @RequestMapping("/api/deltamap")
 @CrossOrigin(origins = "*")
 public class DeltaMapController {
+
+    private static final Logger logger = LoggerFactory.getLogger(DeltaMapController.class);
 
     private final FilingRepository filingRepository;
     private final IssuerRepository issuerRepository;
@@ -52,8 +56,10 @@ public class DeltaMapController {
      * POST /api/deltamap/filings/{filingId}/analyze
      */
     @PostMapping("/filings/{filingId}/analyze")
-    public Mono<ResponseEntity<AnalysisResult>> analyzeFiling(@PathVariable Long filingId) {
-        return sectionExtractor.extractSections(filingId)
+    public Mono<ResponseEntity<AnalysisResult>> analyzeFiling(
+            @PathVariable Long filingId,
+            @RequestParam(required = false, defaultValue = "false") boolean forceReextract) {
+        return sectionExtractor.extractSections(filingId, forceReextract)
                 .map(sections -> {
                     // Compute deltas
                     List<FilingDelta> deltas = diffService.computeDeltas(filingId);
@@ -121,8 +127,23 @@ public class DeltaMapController {
 
         Filing currentFiling = filingOpt.get();
 
-        // Get delta summary
+        // Check if analysis has been done
         FilingDiffService.DeltaSummary summary = diffService.getDeltaSummary(filingId);
+
+        // If no deltas exist, trigger analysis automatically
+        if (summary.getTotalChanges() == 0) {
+            logger.info("No deltas found for filing {}, triggering automatic analysis", filingId);
+
+            // Extract sections and compute deltas
+            try {
+                sectionExtractor.extractSections(filingId).block();
+                diffService.computeDeltas(filingId);
+                // Refresh summary after analysis
+                summary = diffService.getDeltaSummary(filingId);
+            } catch (Exception e) {
+                logger.error("Failed to auto-analyze filing {}: {}", filingId, e.getMessage());
+            }
+        }
 
         // Build response
         DeltaMapDto dto = new DeltaMapDto();
