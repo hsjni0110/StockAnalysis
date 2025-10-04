@@ -479,8 +479,22 @@ export const DeltaMapPage: React.FC = () => {
                           color={value > 0 ? 'success.main' : value < 0 ? 'error.main' : 'text.primary'}
                           fontWeight="bold"
                         >
-                          {value > 0 ? '+' : ''}
-                          {typeof value === 'number' ? value.toFixed(2) : value}%
+                          {basis === 'Abs' ? (
+                            // Absolute values: format as currency/number
+                            typeof value === 'number'
+                              ? value >= 1e9
+                                ? `$${(value / 1e9).toFixed(2)}B`
+                                : value >= 1e6
+                                ? `$${(value / 1e6).toFixed(2)}M`
+                                : `$${value.toLocaleString()}`
+                              : value
+                          ) : (
+                            // Percentage values (QoQ, YoY, etc.)
+                            <>
+                              {value > 0 ? '+' : ''}
+                              {typeof value === 'number' ? value.toFixed(2) : value}%
+                            </>
+                          )}
                         </Typography>
                       </Box>
                     ))}

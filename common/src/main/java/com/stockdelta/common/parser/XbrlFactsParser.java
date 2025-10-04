@@ -47,7 +47,11 @@ public class XbrlFactsParser {
             facts.addAll(parseFactsForTaxonomy(deiFacts, "dei", filingId));
         }
 
-        logger.info("Parsed {} XBRL facts for filing ID: {}", facts.size(), filingId);
+        if (filingId != null) {
+            logger.info("Parsed {} XBRL facts for filing ID: {}", facts.size(), filingId);
+        } else {
+            logger.info("Parsed {} XBRL facts from company facts", facts.size());
+        }
         return facts;
     }
 

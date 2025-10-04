@@ -74,3 +74,4 @@ resources/
 gradlew
 scripts/
 gradle/
+.idea

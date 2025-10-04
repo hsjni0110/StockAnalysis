@@ -285,6 +285,8 @@ public class XbrlMetricsService {
     public static class HeatmapRow {
         private String metric;
         private Map<String, BigDecimal> values; // basis -> value
+
+        @com.fasterxml.jackson.annotation.JsonProperty("zScore")
         private double zScore;
 
         public String getMetric() { return metric; }

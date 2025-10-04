@@ -7,6 +7,7 @@ import com.stockdelta.common.parser.XbrlFactsParser;
 import com.stockdelta.common.repository.FilingRepository;
 import com.stockdelta.common.repository.IngestLogRepository;
 import com.stockdelta.common.repository.IssuerRepository;
+import com.stockdelta.common.repository.XbrlFactRepository;
 import com.stockdelta.common.sec.SecApiClient;
 import com.stockdelta.common.sec.TickerResolver;
 import org.slf4j.Logger;
@@ -39,6 +40,7 @@ public class DataIngestionService {
     private final IssuerRepository issuerRepository;
     private final FilingRepository filingRepository;
     private final IngestLogRepository ingestLogRepository;
+    private final XbrlFactRepository xbrlFactRepository;
 
     @Autowired
     public DataIngestionService(SecApiClient secApiClient,
@@ -48,7 +50,8 @@ public class DataIngestionService {
                                XbrlFactsParser xbrlFactsParser,
                                IssuerRepository issuerRepository,
                                FilingRepository filingRepository,
-                               IngestLogRepository ingestLogRepository) {
+                               IngestLogRepository ingestLogRepository,
+                               XbrlFactRepository xbrlFactRepository) {
         this.secApiClient = secApiClient;
         this.tickerResolver = tickerResolver;
         this.dailyIndexParser = dailyIndexParser;
@@ -57,6 +60,7 @@ public class DataIngestionService {
         this.issuerRepository = issuerRepository;
         this.filingRepository = filingRepository;
         this.ingestLogRepository = ingestLogRepository;
+        this.xbrlFactRepository = xbrlFactRepository;
     }
 
     public static class IngestionRequest {
@@ -265,14 +269,21 @@ public class DataIngestionService {
     private static class CompanyIngestionResult {
         private int insertedCount;
         private int skippedCount;
+        private int xbrlFactsCount;
 
         public CompanyIngestionResult(int insertedCount, int skippedCount) {
+            this(insertedCount, skippedCount, 0);
+        }
+
+        public CompanyIngestionResult(int insertedCount, int skippedCount, int xbrlFactsCount) {
             this.insertedCount = insertedCount;
             this.skippedCount = skippedCount;
+            this.xbrlFactsCount = xbrlFactsCount;
         }
 
         public int getInsertedCount() { return insertedCount; }
         public int getSkippedCount() { return skippedCount; }
+        public int getXbrlFactsCount() { return xbrlFactsCount; }
     }
 
     private Mono<CompanyIngestionResult> ingestCompanySubmissions(String cik) {
@@ -344,12 +355,163 @@ public class DataIngestionService {
                         logMsg.append(", ").append(skipped).append(" skipped");
                         logger.info(logMsg.toString());
 
-                        return Mono.just(new CompanyIngestionResult(inserted, skipped));
+                        // Make variables effectively final for lambda usage
+                        final int finalInserted = inserted;
+                        final int finalSkipped = skipped;
+
+                        // Ingest XBRL facts for this company
+                        return ingestXbrlFacts(cik)
+                                .map(xbrlCount -> new CompanyIngestionResult(finalInserted, finalSkipped, xbrlCount))
+                                .onErrorResume(error -> {
+                                    logger.warn("Failed to ingest XBRL facts for CIK {}: {}", cik, error.getMessage());
+                                    return Mono.just(new CompanyIngestionResult(finalInserted, finalSkipped, 0));
+                                });
 
                     } catch (Exception e) {
                         logger.error("Failed to parse submissions for CIK {}: {}", cik, e.getMessage());
                         return Mono.error(e);
                     }
                 });
+    }
+
+    /**
+     * Ingest XBRL facts for a company and associate with filings based on period matching
+     */
+    private Mono<Integer> ingestXbrlFacts(String cik) {
+        return secApiClient.fetchCompanyFacts(cik)
+                .flatMap(factsResponse -> {
+                    try {
+                        // Get all 10-K and 10-Q filings for this CIK
+                        List<Filing> filings = filingRepository.findByCikOrderByFiledAtDesc(cik).stream()
+                                .filter(f -> f.getForm().matches("10-[KQ]"))
+                                .toList();
+
+                        if (filings.isEmpty()) {
+                            logger.debug("No 10-K/10-Q filings found for CIK {} to associate XBRL facts", cik);
+                            return Mono.just(0);
+                        }
+
+                        // Parse all XBRL facts from the company facts response
+                        // Note: We need to parse WITHOUT a specific filing ID first
+                        List<XbrlFact> allFacts = xbrlFactsParser.parseCompanyFacts(factsResponse, null);
+
+                        int totalSaved = 0;
+
+                        // For each filing, find matching XBRL facts based on end_date
+                        for (Filing filing : filings) {
+                            // Skip if facts already exist for this filing
+                            List<XbrlFact> existingFacts = xbrlFactRepository.findByFilingId(filing.getId());
+                            if (!existingFacts.isEmpty()) {
+                                logger.debug("XBRL facts already exist for filing {}, skipping", filing.getId());
+                                continue;
+                            }
+
+                            if (filing.getPeriodEnd() == null) {
+                                logger.debug("Filing {} has no period_end, skipping XBRL mapping", filing.getId());
+                                continue;
+                            }
+
+                            // Find facts that match this filing's period
+                            List<XbrlFact> matchingFacts = new ArrayList<>();
+                            for (XbrlFact fact : allFacts) {
+                                if (fact.getEndDate() != null &&
+                                    fact.getEndDate().equals(filing.getPeriodEnd())) {
+                                    // Clone fact and set the correct filing ID
+                                    XbrlFact filingFact = cloneFactForFiling(fact, filing.getId());
+                                    if (validateXbrlFact(filingFact)) {
+                                        matchingFacts.add(filingFact);
+                                    }
+                                }
+                            }
+
+                            // Save facts for this filing
+                            if (!matchingFacts.isEmpty()) {
+                                xbrlFactRepository.saveAll(matchingFacts);
+                                totalSaved += matchingFacts.size();
+                                logger.info("Saved {} XBRL facts for filing {} (period: {}, CIK: {})",
+                                        matchingFacts.size(), filing.getId(), filing.getPeriodEnd(), cik);
+                            }
+                        }
+
+                        return Mono.just(totalSaved);
+
+                    } catch (Exception e) {
+                        logger.error("Failed to parse XBRL facts for CIK {}: {}", cik, e.getMessage(), e);
+                        return Mono.error(e);
+                    }
+                })
+                .onErrorResume(error -> {
+                    if (error instanceof org.springframework.web.reactive.function.client.WebClientResponseException) {
+                        org.springframework.web.reactive.function.client.WebClientResponseException webError =
+                            (org.springframework.web.reactive.function.client.WebClientResponseException) error;
+                        if (webError.getStatusCode().value() == 404) {
+                            logger.debug("No XBRL facts available for CIK {}", cik);
+                            return Mono.just(0);
+                        }
+                    }
+                    logger.warn("Error fetching XBRL facts for CIK {}: {}", cik, error.getMessage());
+                    return Mono.just(0);
+                });
+    }
+
+    /**
+     * Clone an XBRL fact for a specific filing
+     */
+    private XbrlFact cloneFactForFiling(XbrlFact source, Long filingId) {
+        XbrlFact fact = new XbrlFact();
+        fact.setFilingId(filingId);
+        fact.setTaxonomy(source.getTaxonomy());
+        fact.setTag(source.getTag());
+        fact.setUnit(source.getUnit());
+        fact.setStartDate(source.getStartDate());
+        fact.setEndDate(source.getEndDate());
+        fact.setValue(source.getValue());
+        fact.setScale(source.getScale());
+        fact.setDecimals(source.getDecimals());
+        fact.setDimensions(source.getDimensions());
+        return fact;
+    }
+
+    /**
+     * Validate XBRL fact data quality
+     */
+    private boolean validateXbrlFact(XbrlFact fact) {
+        // Check required fields
+        if (fact.getTag() == null || fact.getTag().trim().isEmpty()) {
+            logger.debug("Invalid XBRL fact: missing tag");
+            return false;
+        }
+
+        if (fact.getValue() == null) {
+            logger.debug("Invalid XBRL fact: missing value for tag {}", fact.getTag());
+            return false;
+        }
+
+        // Validate value is not NaN or Infinity
+        try {
+            double value = fact.getValue().doubleValue();
+            if (Double.isNaN(value) || Double.isInfinite(value)) {
+                logger.debug("Invalid XBRL fact: invalid value for tag {}", fact.getTag());
+                return false;
+            }
+        } catch (Exception e) {
+            logger.debug("Invalid XBRL fact: cannot convert value to number for tag {}", fact.getTag());
+            return false;
+        }
+
+        // Check if endDate is present and reasonable
+        if (fact.getEndDate() != null) {
+            LocalDate now = LocalDate.now();
+            if (fact.getEndDate().isAfter(now.plusYears(1))) {
+                logger.debug("Invalid XBRL fact: future date for tag {}", fact.getTag());
+                return false;
+            }
+            if (fact.getEndDate().isBefore(LocalDate.of(1900, 1, 1))) {
+                logger.debug("Invalid XBRL fact: date too old for tag {}", fact.getTag());
+                return false;
+            }
+        }
+
+        return true;
     }
 }

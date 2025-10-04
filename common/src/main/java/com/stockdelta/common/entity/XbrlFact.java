@@ -48,7 +48,7 @@ public class XbrlFact {
 
     private Integer decimals;
 
-    @Column(columnDefinition = "jsonb")
+    @Column(columnDefinition = "TEXT")
     private String dimensions;
 
     @Column(name = "created_at")
