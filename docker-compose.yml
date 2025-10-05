@@ -25,53 +25,26 @@ services:
     networks:
       - stock-network
 
-  api:
+  normalization-service:
     build:
-      context: .
-      dockerfile: ./api/Dockerfile
-    container_name: stock-api
+      context: ./normalization-service
+      dockerfile: Dockerfile
+    container_name: stock-normalization
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=stock_delta
-      - DB_USER=stock_user
-      - DB_PASSWORD=stock_password
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - ARELLE_CACHE_DIR=/cache
       - SEC_USER_AGENT=StockDeltaSystem/1.0; admin@stockdelta.com
     ports:
-      - "8080:8080"
-    depends_on:
-      - postgres
-      - redis
+      - "5001:5000"
+    volumes:
+      - arelle_cache:/cache
     networks:
       - stock-network
-
-  ingestor:
-    build:
-      context: .
-      dockerfile: ./ingestor-edgar/Dockerfile
-    container_name: stock-ingestor
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=stock_delta
-      - DB_USER=stock_user
-      - DB_PASSWORD=stock_password
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - SEC_USER_AGENT=StockDeltaSystem/1.0; admin@stockdelta.com
-    depends_on:
-      - postgres
-      - redis
-    networks:
-      - stock-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+  arelle_cache:
 
 networks:
   stock-network:

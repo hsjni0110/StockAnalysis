@@ -70,6 +70,7 @@ export function useFilingDeltas(filingId: number, section?: string) {
   });
 }
 
+// Legacy hook (deprecated)
 export function useXbrlHeatmap(filingId: number) {
   return useQuery<XbrlHeatmapData>({
     queryKey: ['xbrl-heatmap', filingId],
@@ -81,6 +82,95 @@ export function useXbrlHeatmap(filingId: number) {
           return { filingId, rows: [] };
         }
         throw new Error('Failed to fetch XBRL heatmap');
+      }
+
+      return response.json();
+    },
+    enabled: !!filingId,
+  });
+}
+
+// New normalized heatmap hook
+export function useNormalizedHeatmap(filingId: number) {
+  return useQuery<XbrlHeatmapData>({
+    queryKey: ['normalized-heatmap', filingId],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/filings/${filingId}/normalized-heatmap`);
+
+      if (!response.ok) {
+        if (response.status === 204) {
+          return { filingId, rows: [] };
+        }
+        throw new Error('Failed to fetch normalized heatmap');
+      }
+
+      return response.json();
+    },
+    enabled: !!filingId,
+  });
+}
+
+// Trigger normalization for a filing
+export function useNormalizeFiling(filingId: number) {
+  return useMutation({
+    mutationFn: async (calculateMetrics: boolean = true) => {
+      const response = await fetch(
+        `${API_BASE_URL}/filings/${filingId}/normalize?calculateMetrics=${calculateMetrics}`,
+        {
+          method: 'POST',
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to normalize filing');
+      }
+
+      return response.json();
+    },
+  });
+}
+
+// Get normalization stats
+export function useNormalizationStats(filingId: number) {
+  return useQuery<{
+    filingId: number;
+    normalizedConceptCount: number;
+    distinctConcepts: string[];
+    errorCount: number;
+    warningCount: number;
+    hasErrors: boolean;
+  }>({
+    queryKey: ['normalization-stats', filingId],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/filings/${filingId}/normalization-stats`);
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch normalization stats');
+      }
+
+      return response.json();
+    },
+    enabled: !!filingId,
+  });
+}
+
+// Get data quality validation results
+export function useDataQuality(filingId: number) {
+  return useQuery<{
+    filingId: number;
+    errors: any[];
+    warnings: any[];
+    info: any[];
+    errorCount: number;
+    warningCount: number;
+    infoCount: number;
+  }>({
+    queryKey: ['data-quality', filingId],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/filings/${filingId}/data-quality`);
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch data quality');
       }
 
       return response.json();

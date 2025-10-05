@@ -13,9 +13,16 @@ import {
   Chip,
 } from '@mui/material';
 import { OpenInNew as OpenInNewIcon } from '@mui/icons-material';
-import { useFilingDeltas, useXbrlHeatmap, useAnalyzeFiling } from '../hooks/useDeltaMap';
+import {
+  useFilingDeltas,
+  useNormalizedHeatmap,
+  useNormalizeFiling,
+  useNormalizationStats,
+  useDataQuality,
+  useAnalyzeFiling
+} from '../hooks/useDeltaMap';
 import { HelpTooltip } from '../components/HelpTooltip';
-import { FILING_SECTIONS, DELTA_OPERATIONS, CHANGE_METRICS, XBRL_METRICS, GENERAL_TERMS } from '../constants/helpTexts';
+import { FILING_SECTIONS, DELTA_OPERATIONS, CHANGE_METRICS, XBRL_METRICS } from '../constants/helpTexts';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -39,8 +46,14 @@ export const DeltaMapPage: React.FC = () => {
   const filingIdNum = filingId ? parseInt(filingId, 10) : 0;
 
   const { data: deltaData, isLoading: deltasLoading, error: deltasError } = useFilingDeltas(filingIdNum, selectedSection);
-  const { data: heatmapData, isLoading: heatmapLoading } = useXbrlHeatmap(filingIdNum);
+
+  // Use normalized heatmap instead of legacy xbrl-heatmap
+  const { data: heatmapData, isLoading: heatmapLoading } = useNormalizedHeatmap(filingIdNum);
+  const { data: normStats } = useNormalizationStats(filingIdNum);
+  const { data: dataQuality } = useDataQuality(filingIdNum);
+
   const analyzeMutation = useAnalyzeFiling(filingIdNum);
+  const normalizeMutation = useNormalizeFiling(filingIdNum);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
@@ -412,9 +425,83 @@ export const DeltaMapPage: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={activeTab} index={3}>
-        <Typography variant="h6" gutterBottom>
-          XBRL Financial Metrics Heatmap
-        </Typography>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="h6">
+            XBRL Financial Metrics Heatmap
+          </Typography>
+          <Button
+            variant="contained"
+            onClick={() => normalizeMutation.mutate(true)}
+            disabled={normalizeMutation.isPending}
+          >
+            {normalizeMutation.isPending ? 'Normalizing...' : 'Normalize Filing'}
+          </Button>
+        </Box>
+
+        {/* Normalization Stats */}
+        {normStats && (
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Box display="flex" gap={3} flexWrap="wrap" alignItems="center">
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Normalized Concepts
+                </Typography>
+                <Typography variant="h6">{normStats.normalizedConceptCount}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Unique FAC Concepts
+                </Typography>
+                <Typography variant="h6">{normStats.distinctConcepts.length}</Typography>
+              </Box>
+              {dataQuality && (
+                <>
+                  <Box>
+                    <Typography variant="caption" color="error.main">
+                      Errors
+                    </Typography>
+                    <Typography variant="h6" color="error.main">
+                      {dataQuality.errorCount}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="warning.main">
+                      Warnings
+                    </Typography>
+                    <Typography variant="h6" color="warning.main">
+                      {dataQuality.warningCount}
+                    </Typography>
+                  </Box>
+                </>
+              )}
+            </Box>
+            {normStats.distinctConcepts.length > 0 && (
+              <Box mt={2}>
+                <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+                  Available Concepts:
+                </Typography>
+                <Box display="flex" gap={1} flexWrap="wrap">
+                  {normStats.distinctConcepts.map((concept) => (
+                    <Chip key={concept} label={concept} size="small" variant="outlined" />
+                  ))}
+                </Box>
+              </Box>
+            )}
+          </Paper>
+        )}
+
+        {normalizeMutation.isSuccess && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Filing normalized successfully! {normalizeMutation.data.normalizedConceptCount} concepts processed.
+          </Alert>
+        )}
+
+        {normalizeMutation.isError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Normalization failed. Please try again.
+          </Alert>
+        )}
+
         {heatmapLoading ? (
           <Box display="flex" justifyContent="center" py={4}>
             <CircularProgress />

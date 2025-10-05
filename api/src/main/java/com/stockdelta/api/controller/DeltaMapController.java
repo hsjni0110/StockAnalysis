@@ -8,6 +8,10 @@ import com.stockdelta.common.repository.IssuerRepository;
 import com.stockdelta.common.service.FilingDiffService;
 import com.stockdelta.common.service.FilingSectionExtractor;
 import com.stockdelta.common.service.XbrlMetricsService;
+import com.stockdelta.common.service.NormalizedMetricsService;
+import com.stockdelta.common.service.NormalizationPipelineService;
+import com.stockdelta.common.entity.DataQualityValidation;
+import com.stockdelta.common.repository.DataQualityValidationRepository;
 import com.stockdelta.api.dto.DeltaMapDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,18 +41,27 @@ public class DeltaMapController {
     private final FilingSectionExtractor sectionExtractor;
     private final FilingDiffService diffService;
     private final XbrlMetricsService metricsService;
+    private final NormalizedMetricsService normalizedMetricsService;
+    private final NormalizationPipelineService normalizationPipelineService;
+    private final DataQualityValidationRepository validationRepository;
 
     @Autowired
     public DeltaMapController(FilingRepository filingRepository,
                                IssuerRepository issuerRepository,
                                FilingSectionExtractor sectionExtractor,
                                FilingDiffService diffService,
-                               XbrlMetricsService metricsService) {
+                               XbrlMetricsService metricsService,
+                               NormalizedMetricsService normalizedMetricsService,
+                               NormalizationPipelineService normalizationPipelineService,
+                               DataQualityValidationRepository validationRepository) {
         this.filingRepository = filingRepository;
         this.issuerRepository = issuerRepository;
         this.sectionExtractor = sectionExtractor;
         this.diffService = diffService;
         this.metricsService = metricsService;
+        this.normalizedMetricsService = normalizedMetricsService;
+        this.normalizationPipelineService = normalizationPipelineService;
+        this.validationRepository = validationRepository;
     }
 
     /**
@@ -171,18 +184,126 @@ public class DeltaMapController {
     }
 
     /**
-     * Get XBRL heatmap data for a filing
-     * GET /api/deltamap/filings/{filingId}/xbrl-heatmap
+     * Get normalized heatmap data for a filing (New - uses NormalizedMetricsService)
+     * GET /api/deltamap/filings/{filingId}/normalized-heatmap
      */
-    @GetMapping("/filings/{filingId}/xbrl-heatmap")
-    public ResponseEntity<XbrlMetricsService.HeatmapData> getXbrlHeatmap(@PathVariable Long filingId) {
-        XbrlMetricsService.HeatmapData heatmap = metricsService.getHeatmapData(filingId);
+    @GetMapping("/filings/{filingId}/normalized-heatmap")
+    public ResponseEntity<NormalizedMetricsService.HeatmapData> getNormalizedHeatmap(@PathVariable Long filingId) {
+        NormalizedMetricsService.HeatmapData heatmap = normalizedMetricsService.getHeatmapData(filingId);
 
         if (heatmap.getRows() == null || heatmap.getRows().isEmpty()) {
             return ResponseEntity.noContent().build();
         }
 
         return ResponseEntity.ok(heatmap);
+    }
+
+    /**
+     * Trigger normalization for a filing using Arelle + FAC
+     * POST /api/deltamap/filings/{filingId}/normalize
+     */
+    @PostMapping("/filings/{filingId}/normalize")
+    public Mono<ResponseEntity<NormalizationPipelineService.NormalizationResult>> normalizeFiling(
+            @PathVariable Long filingId,
+            @RequestParam(required = false, defaultValue = "true") boolean calculateMetrics) {
+
+        return normalizationPipelineService.processFiling(filingId)
+                .map(result -> {
+                    // Optionally calculate metrics after normalization
+                    if (calculateMetrics && "completed".equals(result.getStatus())) {
+                        try {
+                            normalizedMetricsService.calculateMetrics(filingId);
+                        } catch (Exception e) {
+                            logger.error("Failed to calculate metrics for filing {}: {}",
+                                    filingId, e.getMessage());
+                        }
+                    }
+                    return ResponseEntity.ok(result);
+                })
+                .onErrorResume(error -> {
+                    logger.error("Normalization failed for filing {}: {}", filingId, error.getMessage());
+                    NormalizationPipelineService.NormalizationResult result =
+                            new NormalizationPipelineService.NormalizationResult();
+                    result.setFilingId(filingId);
+                    result.setStatus("failed");
+                    result.setErrorMessage(error.getMessage());
+                    return Mono.just(ResponseEntity.status(500).body(result));
+                });
+    }
+
+    /**
+     * Calculate metrics for a filing
+     * POST /api/deltamap/filings/{filingId}/calculate-metrics
+     */
+    @PostMapping("/filings/{filingId}/calculate-metrics")
+    public ResponseEntity<Map<String, Object>> calculateMetrics(@PathVariable Long filingId) {
+        try {
+            List<com.stockdelta.common.entity.NormalizedMetric> metrics =
+                    normalizedMetricsService.calculateMetrics(filingId);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("filingId", filingId);
+            response.put("metricsCalculated", metrics.size());
+            response.put("status", "success");
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Failed to calculate metrics for filing {}: {}", filingId, e.getMessage(), e);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("filingId", filingId);
+            response.put("status", "failed");
+            response.put("error", e.getMessage());
+
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    /**
+     * Get normalization statistics for a filing
+     * GET /api/deltamap/filings/{filingId}/normalization-stats
+     */
+    @GetMapping("/filings/{filingId}/normalization-stats")
+    public ResponseEntity<NormalizationPipelineService.NormalizationStats> getNormalizationStats(
+            @PathVariable Long filingId) {
+
+        NormalizationPipelineService.NormalizationStats stats =
+                normalizationPipelineService.getStats(filingId);
+
+        return ResponseEntity.ok(stats);
+    }
+
+    /**
+     * Get data quality validation results for a filing
+     * GET /api/deltamap/filings/{filingId}/data-quality
+     */
+    @GetMapping("/filings/{filingId}/data-quality")
+    public ResponseEntity<DataQualityResponse> getDataQuality(@PathVariable Long filingId) {
+        List<DataQualityValidation> validations = validationRepository.findByFilingId(filingId);
+
+        DataQualityResponse response = new DataQualityResponse();
+        response.setFilingId(filingId);
+
+        List<DataQualityValidation> errors = validations.stream()
+                .filter(v -> "error".equals(v.getSeverity()))
+                .toList();
+
+        List<DataQualityValidation> warnings = validations.stream()
+                .filter(v -> "warning".equals(v.getSeverity()))
+                .toList();
+
+        List<DataQualityValidation> info = validations.stream()
+                .filter(v -> "info".equals(v.getSeverity()))
+                .toList();
+
+        response.setErrors(errors);
+        response.setWarnings(warnings);
+        response.setInfo(info);
+        response.setErrorCount(errors.size());
+        response.setWarningCount(warnings.size());
+        response.setInfoCount(info.size());
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -353,5 +474,36 @@ public class DeltaMapController {
             public String getSeverity() { return severity; }
             public void setSeverity(String severity) { this.severity = severity; }
         }
+    }
+
+    public static class DataQualityResponse {
+        private Long filingId;
+        private List<DataQualityValidation> errors;
+        private List<DataQualityValidation> warnings;
+        private List<DataQualityValidation> info;
+        private int errorCount;
+        private int warningCount;
+        private int infoCount;
+
+        public Long getFilingId() { return filingId; }
+        public void setFilingId(Long filingId) { this.filingId = filingId; }
+
+        public List<DataQualityValidation> getErrors() { return errors; }
+        public void setErrors(List<DataQualityValidation> errors) { this.errors = errors; }
+
+        public List<DataQualityValidation> getWarnings() { return warnings; }
+        public void setWarnings(List<DataQualityValidation> warnings) { this.warnings = warnings; }
+
+        public List<DataQualityValidation> getInfo() { return info; }
+        public void setInfo(List<DataQualityValidation> info) { this.info = info; }
+
+        public int getErrorCount() { return errorCount; }
+        public void setErrorCount(int errorCount) { this.errorCount = errorCount; }
+
+        public int getWarningCount() { return warningCount; }
+        public void setWarningCount(int warningCount) { this.warningCount = warningCount; }
+
+        public int getInfoCount() { return infoCount; }
+        public void setInfoCount(int infoCount) { this.infoCount = infoCount; }
     }
 }
